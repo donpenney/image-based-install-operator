@@ -50,6 +50,10 @@ const (
 
 // ImageClusterInstallSpec defines the desired state of ImageClusterInstall
 type ImageClusterInstallSpec struct {
+	// PreProvisioning optionally prepares a bare-metal server with an IBI live
+	// ISO before starting the normal cluster configuration workflow.
+	// +optional
+	PreProvisioning *PreProvisioningSpec `json:"preProvisioning,omitempty"`
 	// ClusterDeploymentRef is a reference to the ClusterDeployment.
 	// +optional
 	ClusterDeploymentRef *corev1.LocalObjectReference `json:"clusterDeploymentRef"`
@@ -118,6 +122,9 @@ type ImageClusterInstallSpec struct {
 
 // ImageClusterInstallStatus defines the observed state of ImageClusterInstall
 type ImageClusterInstallStatus struct {
+	// PreProvisioning records the current immutable preparation attempt.
+	// +optional
+	PreProvisioning *PreProvisioningStatus `json:"preProvisioning,omitempty"`
 	// Conditions is a list of conditions associated with syncing to the cluster.
 	// +optional
 	Conditions []hivev1.ClusterInstallCondition `json:"conditions,omitempty"`

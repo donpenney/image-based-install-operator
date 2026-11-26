@@ -6,6 +6,9 @@ toolchain go1.26.7
 
 require (
 	github.com/containers/image/v5 v5.31.0
+	github.com/coreos/go-systemd/v22 v22.7.0
+	github.com/coreos/ignition/v2 v2.24.0
+	github.com/diskfs/go-diskfs v1.4.1
 	github.com/go-logr/logr v1.4.3
 	github.com/go-openapi/swag v0.25.4
 	github.com/gofrs/flock v0.12.1
@@ -120,13 +123,10 @@ require (
 	github.com/cncf/xds/go v0.0.0-20251210132809-ee656c7534f5 // indirect
 	github.com/containers/storage v1.54.0 // indirect
 	github.com/coreos/go-semver v0.3.1 // indirect
-	github.com/coreos/go-systemd/v22 v22.7.0 // indirect
-	github.com/coreos/ignition/v2 v2.24.0 // indirect
 	github.com/coreos/stream-metadata-go v0.4.10-0.20250806142651-4a7d280a6c7b // indirect
 	github.com/coreos/vcontext v0.0.0-20230201181013-d72178a18687 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/digitalocean/go-libvirt v0.0.0-20240220204746-fcabe97a6eed // indirect
-	github.com/diskfs/go-diskfs v1.4.1 // indirect
 	github.com/djherbis/times v1.6.0 // indirect
 	github.com/elliotwutingfeng/asciiset v0.0.0-20230602022725-51bbb787efab // indirect
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect

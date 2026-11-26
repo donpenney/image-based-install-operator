@@ -1,0 +1,12 @@
+[Unit]
+Description=Apply IBI preparation configuration before disk preparation
+Requires=NetworkManager.service
+After=NetworkManager.service network-config.service
+Before=install-rhcos-and-restore-seed.service
+OnFailure=ibi-preparation-failed.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/libexec/ibi-preparation-agent bootstrap
+TimeoutStartSec=420

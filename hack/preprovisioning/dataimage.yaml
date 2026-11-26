@@ -1,0 +1,8 @@
+apiVersion: metal3.io/v1alpha1
+kind: DataImage
+metadata:
+  # DataImage name and namespace must match its BMH.
+  name: ibi-media-probe
+  namespace: ibi-preparation-probe
+spec:
+  url: https://iso.example.com/diagnostics/configuration-probe.iso

@@ -1,0 +1,89 @@
+#!/bin/bash
+# Copyright 2026 Red Hat, Inc.
+# SPDX-License-Identifier: Apache-2.0
+
+set -euo pipefail
+umask 077
+
+runtime_dir=${IBI_PREPARATION_RUNTIME_DIR:-/run/ibi-preparation}
+config=${runtime_dir}/config.json
+
+check_deadline() {
+    local deadline
+    deadline=$(jq -er '.deadline' "${config}")
+    test "$(date +%s)" -lt "$(date -d "${deadline}" +%s)"
+}
+
+case ${1:-} in
+bootstrap)
+    install -d -m 0700 "${runtime_dir}" "${runtime_dir}/media"
+    device=/dev/disk/by-label/cluster-config
+    udevadm settle --timeout=30
+    for ((attempt=0; attempt<60; attempt++)); do
+        if [[ -b ${device} ]]; then
+            break
+        fi
+        sleep 1
+    done
+    test -b "${device}"
+    mount -o ro "${device}" "${runtime_dir}/media"
+    trap 'umount "${runtime_dir}/media"' EXIT
+    input=${runtime_dir}/media/ibi-preparation/config.json
+    jq -e '.version == 1 and (.token | type == "string" and length > 20)
+        and (.callbackURL | startswith("https://"))
+        and (.hostUID | type == "string" and length > 0)
+        and (.attemptID | type == "string" and length > 0)' \
+        "${input}" >/dev/null
+    install -m 0600 "${input}" "${config}"
+    check_deadline
+    jq -er '.api_version == 1
+        and (.raw_nm_state_config | type == "string")' \
+        "${runtime_dir}/media/cluster-configuration/manifest.json" >/dev/null
+    jq -r '.raw_nm_state_config' \
+        "${runtime_dir}/media/cluster-configuration/manifest.json" \
+        > "${runtime_dir}/network.yaml"
+    if [[ -s ${runtime_dir}/network.yaml ]] && \
+        [[ -n $(tr -d '[:space:]' < "${runtime_dir}/network.yaml") ]]; then
+        timeout 180 nmstatectl apply "${runtime_dir}/network.yaml"
+    fi
+    nm-online -q --timeout=120
+    check_deadline
+    ;;
+report)
+    result=${2:-}
+    [[ ${result} == success || ${result} == failure ]]
+    test -r "${config}"
+    host_uid=$(jq -er '.hostUID' "${config}")
+    jq -nr --arg result "${result}" --arg host "${host_uid}" \
+        '{result:$result,hostUID:$host}' > "${runtime_dir}/result.json"
+    jq -r '"Authorization: Bearer " + .token' "${config}" \
+        > "${runtime_dir}/authorization.header"
+    jq -r '.caBundle // empty' "${config}" > "${runtime_dir}/ca.pem"
+    tls_options=()
+    if [[ -s ${runtime_dir}/ca.pem ]]; then
+        tls_options=(--cacert "${runtime_dir}/ca.pem")
+    fi
+    callback=$(jq -er '.callbackURL' "${config}")
+    [[ ${callback} == https://* ]]
+    while check_deadline; do
+        code=000
+        code=$(curl --silent --show-error --connect-timeout 10 \
+            --max-time 30 --output /dev/null --write-out '%{http_code}' \
+            "${tls_options[@]}" \
+            --header "@${runtime_dir}/authorization.header" \
+            --header 'Content-Type: application/json' \
+            --data-binary "@${runtime_dir}/result.json" "${callback}") || true
+        case ${code} in
+        200) exit 0 ;;
+        401|403|404|409) exit 1 ;;
+        esac
+        sleep 5
+    done
+    exit 1
+    ;;
+*)
+    echo 'Usage: ibi-preparation-agent' \
+        '{bootstrap|report success|report failure}' >&2
+    exit 2
+    ;;
+esac

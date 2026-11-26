@@ -19,6 +19,7 @@ package controllers
 import (
 	"bytes"
 	"context"
+
 	// These are required for image parsing to work correctly with digest-based pull specs
 	// See: https://github.com/opencontainers/go-digest/blob/v1.0.0/README.md#usage
 	_ "crypto/sha256"
@@ -64,6 +65,9 @@ import (
 )
 
 type ImageClusterInstallReconcilerOptions struct {
+	PreparationBaseURL      string        `envconfig:"PREPARATION_BASE_URL"`
+	PreparationCAFile       string        `envconfig:"PREPARATION_CA_FILE"`
+	PreparationISOOrigins   string        `envconfig:"PREPARATION_ISO_ORIGINS"`
 	ServiceName             string        `envconfig:"SERVICE_NAME"`
 	ServiceNamespace        string        `envconfig:"SERVICE_NAMESPACE"`
 	ServicePort             string        `envconfig:"SERVICE_PORT"`
@@ -148,14 +152,13 @@ func (r *ImageClusterInstallReconciler) Reconcile(ctx context.Context, req ctrl.
 		}
 		return res, err
 	}
+	if err := validatePreparationHostReference(ici); err != nil {
+		return ctrl.Result{}, err
+	}
 
-	var cd *hivev1.ClusterDeployment
-	if ici.Spec.ClusterDeploymentRef != nil && ici.Spec.ClusterDeploymentRef.Name != "" {
-		var err error
-		cd, err = r.getCD(ctx, ici)
-		if err != nil {
-			log.Error(err)
-		}
+	cd, cdErr := r.getCD(ctx, ici)
+	if cdErr != nil {
+		log.Error(cdErr)
 	}
 
 	r.labelReferencedObjectsForBackup(ctx, log, ici, cd)
@@ -229,6 +232,9 @@ func (r *ImageClusterInstallReconciler) Reconcile(ctx context.Context, req ctrl.
 	// - HostValidationFailed (default): in case of any errors or invalid BMH configuration the reconcile ends here.
 	// Default is HostValidationFailedReason but validateBMH() can change this to HostValidationPendingReason
 	cond.Reason = v1alpha1.HostValidationFailedReason
+	if stop, result, preparationErr := r.reconcilePreparation(ctx, ici, bmh, &cond); stop || preparationErr != nil {
+		return result, preparationErr
+	}
 	res, err := r.validateHost(ctx, ici, bmh, &cond, log)
 	if !res.IsZero() || err != nil {
 		return res, err
@@ -305,6 +311,10 @@ func (r *ImageClusterInstallReconciler) validateConfiguration(
 		cond.Message = fmt.Sprintf("failed to get BareMetalHost %s/%s", ici.Spec.BareMetalHostRef.Namespace, ici.Spec.BareMetalHostRef.Name)
 		log.Error(err)
 		return nil, nil
+	}
+	if s := ici.Status.PreProvisioning; s != nil && !preparationHostMatches(s, bmh) {
+		cond.Message = "preparation host identity changed"
+		return nil, fmt.Errorf("%s", cond.Message)
 	}
 
 	// AutomatedCleaningMode is set at the beginning of this flow because we don't want ironic to format the disk
@@ -792,6 +802,9 @@ func (r *ImageClusterInstallReconciler) ensureBMHDataImage(
 }
 
 func (r *ImageClusterInstallReconciler) getCD(ctx context.Context, ici *v1alpha1.ImageClusterInstall) (*hivev1.ClusterDeployment, error) {
+	if ici.Spec.ClusterDeploymentRef == nil || ici.Spec.ClusterDeploymentRef.Name == "" {
+		return nil, nil
+	}
 	clusterDeployment := &hivev1.ClusterDeployment{}
 	cdKey := types.NamespacedName{
 		Namespace: ici.Namespace,
@@ -1306,6 +1319,26 @@ func (r *ImageClusterInstallReconciler) handleFinalizer(ctx context.Context, log
 			return ctrl.Result{Requeue: true}, true, r.Patch(ctx, ici, patch)
 		}
 		return ctrl.Result{}, false, nil
+	}
+	if s := ici.Status.PreProvisioning; s != nil && s.Phase == v1alpha1.PreparationComplete {
+		// Completion is persisted before releasing the preparation claim.
+		// Deletion can interrupt that final normal reconcile.
+		result, err := r.releaseCompletedPreparation(ctx, ici)
+		if !result.IsZero() || err != nil {
+			return result, true, err
+		}
+	}
+	if ici.Status.PreProvisioning != nil && ici.Status.PreProvisioning.Phase != v1alpha1.PreparationComplete {
+		stop, result, err := r.finalizePreparation(ctx, ici)
+		if stop || err != nil {
+			return result, true, err
+		}
+		// Preparation never entered normal installation. Its cleanup has
+		// already released only its own resources; do not run the legacy
+		// DataImage deletion/reboot path against a subsequently reused host.
+		patch := client.MergeFrom(ici.DeepCopy())
+		controllerutil.RemoveFinalizer(ici, clusterInstallFinalizerName)
+		return ctrl.Result{}, true, r.Patch(ctx, ici, patch)
 	}
 
 	removeFinalizer := func() error {

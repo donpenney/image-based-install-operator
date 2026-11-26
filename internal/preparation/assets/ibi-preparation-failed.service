@@ -1,0 +1,6 @@
+[Unit]
+Description=Report IBI preparation failure
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/ibi-preparation-agent report failure

@@ -17,12 +17,17 @@ import (
 	configclientset "github.com/openshift/client-go/config/clientset/versioned"
 	crtls "github.com/openshift/controller-runtime-common/pkg/tls"
 	"github.com/sirupsen/logrus"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 
+	"github.com/openshift/image-based-install-operator/api/v1alpha1"
 	"github.com/openshift/image-based-install-operator/internal/imageserver"
+	"github.com/openshift/image-based-install-operator/internal/preparation"
 	"github.com/openshift/image-based-install-operator/internal/tlsconfig"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
@@ -31,10 +36,13 @@ import (
 )
 
 var Options struct {
-	DataDir       string `envconfig:"DATA_DIR" default:"/data"`
-	Port          string `envconfig:"PORT" default:"8000"`
-	HTTPSKeyFile  string `envconfig:"HTTPS_KEY_FILE"`
-	HTTPSCertFile string `envconfig:"HTTPS_CERT_FILE"`
+	PreparationPort          string `envconfig:"PREPARATION_PORT"`
+	PreparationHTTPSKeyFile  string `envconfig:"PREPARATION_HTTPS_KEY_FILE"`
+	PreparationHTTPSCertFile string `envconfig:"PREPARATION_HTTPS_CERT_FILE"`
+	DataDir                  string `envconfig:"DATA_DIR" default:"/data"`
+	Port                     string `envconfig:"PORT" default:"8000"`
+	HTTPSKeyFile             string `envconfig:"HTTPS_KEY_FILE"`
+	HTTPSCertFile            string `envconfig:"HTTPS_CERT_FILE"`
 }
 
 func main() {
@@ -68,6 +76,26 @@ func main() {
 		Addr:              fmt.Sprintf(":%s", Options.Port),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
+	var preparationServer *http.Server
+	if Options.PreparationPort != "" {
+		if Options.PreparationHTTPSKeyFile == "" || Options.PreparationHTTPSCertFile == "" || Options.HTTPSKeyFile == "" || Options.HTTPSCertFile == "" {
+			log.Fatal("Preparation requires HTTPS certificates on both listeners")
+		}
+		scheme := runtime.NewScheme()
+		if err := v1alpha1.AddToScheme(scheme); err != nil {
+			log.Fatal(err)
+		}
+		if err := corev1.AddToScheme(scheme); err != nil {
+			log.Fatal(err)
+		}
+		apiClient, err := client.New(ctrl.GetConfigOrDie(), client.Options{Scheme: scheme})
+		if err != nil {
+			log.Fatal(err)
+		}
+		handler := &preparation.Handler{Client: apiClient, DataDir: Options.DataDir}
+		http.Handle("/preparation-images/", handler.ImageMux())
+		preparationServer = &http.Server{Addr: ":" + Options.PreparationPort, Handler: handler.CallbackMux(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 8192}
+	}
 
 	watchCtx, watchCancel := context.WithCancel(context.Background())
 	defer watchCancel()
@@ -91,6 +119,17 @@ func main() {
 			if tlsResult.TLSConfig != nil {
 				server.TLSConfig = &tls.Config{}
 				tlsResult.TLSConfig(server.TLSConfig)
+			}
+			if preparationServer != nil {
+				preparationServer.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+				if server.TLSConfig != nil {
+					preparationServer.TLSConfig = server.TLSConfig.Clone()
+				}
+				go func() {
+					if listenErr := preparationServer.ListenAndServeTLS(Options.PreparationHTTPSCertFile, Options.PreparationHTTPSKeyFile); listenErr != nil && listenErr != http.ErrServerClosed {
+						log.WithError(listenErr).Fatal("Preparation listener closed")
+					}
+				}()
 			}
 			err = server.ListenAndServeTLS(Options.HTTPSCertFile, Options.HTTPSKeyFile)
 		} else {
@@ -116,6 +155,12 @@ func main() {
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
+	if preparationServer != nil {
+		if err := preparationServer.Shutdown(shutdownCtx); err != nil {
+			log.WithError(err).Error("Preparation listener shutdown failed")
+			_ = preparationServer.Close()
+		}
+	}
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.WithError(err).Error("shutdown failed")
 		if err := server.Close(); err != nil {

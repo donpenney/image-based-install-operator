@@ -84,6 +84,9 @@ func (r *ImageClusterInstall) ValidateDelete() (admission.Warnings, error) {
 }
 
 func (r *ImageClusterInstall) validate() error {
+	if err := r.Spec.PreProvisioning.Validate(); err != nil {
+		return err
+	}
 	if err := isValidSSHPublicKey(r.Spec.SSHKey); err != nil {
 		return fmt.Errorf("invalid ssh key: %v", err)
 	}
@@ -104,7 +107,7 @@ func (r *ImageClusterInstall) validate() error {
 
 func installationStarted(r *ImageClusterInstall) bool {
 	// if the BareMetalHostRef is set on the status than the installation has started.
-	return r.Status.BareMetalHostRef != nil
+	return r.Status.BareMetalHostRef != nil || r.Status.PreProvisioning != nil
 }
 
 func isSpecUpdate(oldClusterInstall *ImageClusterInstall, newClusterInstall *ImageClusterInstall) bool {

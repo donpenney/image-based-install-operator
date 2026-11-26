@@ -245,6 +245,12 @@ spec:
                   value: /certs/tls.crt
                 - name: PORT
                   value: "8000"
+                - name: PREPARATION_PORT
+                  value: "8444"
+                - name: PREPARATION_HTTPS_KEY_FILE
+                  value: /preparation-certs/tls.key
+                - name: PREPARATION_HTTPS_CERT_FILE
+                  value: /preparation-certs/tls.crt
                 - name: TMPDIR
                   value: /data
                 - name: XDG_CACHE_HOME
@@ -254,6 +260,8 @@ spec:
                 ports:
                 - containerPort: 8000
                   name: config-server
+                - containerPort: 8444
+                  name: preparation
                 resources:
                   requests:
                     cpu: 10m
@@ -270,6 +278,8 @@ spec:
                   name: data
                 - mountPath: /certs
                   name: certs
+                - mountPath: /preparation-certs
+                  name: preparation-certs
                 - mountPath: /tmp
                   name: tmp
               securityContext:
@@ -289,6 +299,9 @@ spec:
               - name: webhook-certs
                 secret:
                   secretName: ibi-webhook-serving-certs
+              - name: preparation-certs
+                secret:
+                  secretName: ibi-preparation-serving-certs
       permissions:
       - rules:
         - apiGroups:

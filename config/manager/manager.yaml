@@ -90,6 +90,12 @@ spec:
           value: /certs/tls.crt
         - name: PORT
           value: "8000"
+        - name: PREPARATION_PORT
+          value: "8444"
+        - name: PREPARATION_HTTPS_KEY_FILE
+          value: /preparation-certs/tls.key
+        - name: PREPARATION_HTTPS_CERT_FILE
+          value: /preparation-certs/tls.crt
         - name: TMPDIR
           value: /data
         - name: XDG_CACHE_HOME
@@ -97,6 +103,8 @@ spec:
         ports:
         - name: config-server
           containerPort: 8000
+        - name: preparation
+          containerPort: 8444
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
@@ -113,6 +121,8 @@ spec:
           mountPath: /data
         - name: certs
           mountPath: /certs
+        - name: preparation-certs
+          mountPath: /preparation-certs
         - name: tmp
           mountPath: /tmp
       volumes:
@@ -126,6 +136,9 @@ spec:
       - name: webhook-certs
         secret:
           secretName: ibi-webhook-serving-certs
+      - name: preparation-certs
+        secret:
+          secretName: ibi-preparation-serving-certs
       serviceAccountName: image-based-install-operator
       terminationGracePeriodSeconds: 10
 ---
@@ -141,5 +154,21 @@ spec:
   - port: 8000
     protocol: TCP
     name: config-server
+  selector:
+    app: image-based-install-operator
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: image-based-install-preparation
+  namespace: image-based-install-operator
+  annotations:
+    service.beta.openshift.io/serving-cert-secret-name: ibi-preparation-serving-certs
+spec:
+  ports:
+  - name: preparation
+    port: 8444
+    targetPort: preparation
+    protocol: TCP
   selector:
     app: image-based-install-operator
